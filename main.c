@@ -1,6 +1,9 @@
 #include <MagickWand/MagickWand.h>
 #include <stdio.h>
 
+/*
+ * Glyph IDs/indexes (for arrays).
+ */
 #define GLYPH_BLOCK 0
 #define GLYPH_LEFT_1_4 1
 #define GLYPH_LEFT_2_4 2
@@ -18,6 +21,9 @@
 #define GLYPH_QUAD_BOTTOM_RIGHT 14
 #define GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT 15
 
+/*
+ * Glyph characters.
+ */
 #define GLYPH_BLOCK_STR "\u2588"
 #define GLYPH_LEFT_1_4_STR "\u258E"
 #define GLYPH_LEFT_2_4_STR "\u258C"
@@ -35,11 +41,20 @@
 #define GLYPH_QUAD_BOTTOM_RIGHT_STR "\u2597"
 #define GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT_STR "\u259A"
 
+/*
+ * Global definitions.
+ */
 #define NUM_DIFFERENT_GLYPHS 16
 #define GlyphIndex int
 
+/*
+ * Return the difference between two numbers.
+ */
 #define diff(a, b) a >= b ? a - b : b - a
 
+/*
+ * Represents a glyph, with foreground and background colours.
+ */
 typedef struct {
 	unsigned int fg_red;
 	unsigned int fg_green;
@@ -49,9 +64,11 @@ typedef struct {
 	unsigned int bg_blue;
 } Glyph;
 
-typedef Glyph Block[NUM_DIFFERENT_GLYPHS];
-
-const char *getBestGlyph(Block *block, GlyphIndex *best_glyph) {
+/*
+ * Return the glyph that best represents the block of pixels.
+ * Also updates the best_glyph pointer with the best glyph's index.
+ */
+const char *get_best_glyph(Glyph (*block)[], GlyphIndex *best_glyph) {
 	unsigned int largest_contrast = 0;
 
 	for (size_t index = 0; index < NUM_DIFFERENT_GLYPHS; index++) {
@@ -67,36 +84,37 @@ const char *getBestGlyph(Block *block, GlyphIndex *best_glyph) {
 		}
 	}
 
-	if (*best_glyph == GLYPH_LEFT_1_4) {
-		return GLYPH_LEFT_1_4_STR;
-	} else if (*best_glyph == GLYPH_LEFT_2_4) {
-		return GLYPH_LEFT_2_4_STR;
-	} else if (*best_glyph == GLYPH_LEFT_3_4) {
-		return GLYPH_LEFT_3_4_STR;
-	} else if (*best_glyph == GLYPH_BOTTOM_1_8) {
-		return GLYPH_BOTTOM_1_8_STR;
-	} else if (*best_glyph == GLYPH_BOTTOM_2_8) {
-		return GLYPH_BOTTOM_2_8_STR;
-	} else if (*best_glyph == GLYPH_BOTTOM_3_8) {
-		return GLYPH_BOTTOM_3_8_STR;
-	} else if (*best_glyph == GLYPH_BOTTOM_4_8) {
-		return GLYPH_BOTTOM_4_8_STR;
-	} else if (*best_glyph == GLYPH_BOTTOM_5_8) {
-		return GLYPH_BOTTOM_5_8_STR;
-	} else if (*best_glyph == GLYPH_BOTTOM_6_8) {
-		return GLYPH_BOTTOM_6_8_STR;
-	} else if (*best_glyph == GLYPH_BOTTOM_7_8) {
-		return GLYPH_BOTTOM_7_8_STR;
-	} else if (*best_glyph == GLYPH_QUAD_TOP_LEFT) {
-		return GLYPH_QUAD_TOP_LEFT_STR;
-	} else if (*best_glyph == GLYPH_QUAD_TOP_RIGHT) {
-		return GLYPH_QUAD_TOP_RIGHT_STR;
-	} else if (*best_glyph == GLYPH_QUAD_BOTTOM_LEFT) {
-		return GLYPH_QUAD_BOTTOM_LEFT_STR;
-	} else if (*best_glyph == GLYPH_QUAD_BOTTOM_RIGHT) {
-		return GLYPH_QUAD_BOTTOM_RIGHT_STR;
-	} else if (*best_glyph == GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT) {
-		return GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT_STR;
+	switch (*best_glyph) {
+		case GLYPH_LEFT_1_4:
+			return GLYPH_LEFT_1_4_STR;
+		case GLYPH_LEFT_2_4:
+			return GLYPH_LEFT_2_4_STR;
+		case GLYPH_LEFT_3_4:
+			return GLYPH_LEFT_3_4_STR;
+		case GLYPH_BOTTOM_1_8:
+			return GLYPH_BOTTOM_1_8_STR;
+		case GLYPH_BOTTOM_2_8:
+			return GLYPH_BOTTOM_2_8_STR;
+		case GLYPH_BOTTOM_3_8:
+			return GLYPH_BOTTOM_3_8_STR;
+		case GLYPH_BOTTOM_4_8:
+			return GLYPH_BOTTOM_4_8_STR;
+		case GLYPH_BOTTOM_5_8:
+			return GLYPH_BOTTOM_5_8_STR;
+		case GLYPH_BOTTOM_6_8:
+			return GLYPH_BOTTOM_6_8_STR;
+		case GLYPH_BOTTOM_7_8:
+			return GLYPH_BOTTOM_7_8_STR;
+		case GLYPH_QUAD_TOP_LEFT:
+			return GLYPH_QUAD_TOP_LEFT_STR;
+		case GLYPH_QUAD_TOP_RIGHT:
+			return GLYPH_QUAD_TOP_RIGHT_STR;
+		case GLYPH_QUAD_BOTTOM_LEFT:
+			return GLYPH_QUAD_BOTTOM_LEFT_STR;
+		case GLYPH_QUAD_BOTTOM_RIGHT:
+			return GLYPH_QUAD_BOTTOM_RIGHT_STR;
+		case GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT:
+			return GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT_STR;
 	}
 
 	return GLYPH_BLOCK_STR;
@@ -126,14 +144,18 @@ int main(/*int argc, char **argv*/) {
 			PixelWand **row = NULL;
 			size_t num_wands = 0;
 			size_t block_y = 0;
-			Block block = {0};
+			Glyph block[NUM_DIFFERENT_GLYPHS] = {0};
 
 			while ((row = PixelGetNextIteratorRow(iter, &num_wands)) != NULL) {
 				for (size_t block_x = 0; block_x < num_wands; block_x++) {
+					// Convert from ratio to decimal.
 					unsigned int red = 255 * PixelGetRed(row[block_x]);
 					unsigned int green = 255 * PixelGetGreen(row[block_x]);
 					unsigned int blue = 255 * PixelGetBlue(row[block_x]);
 
+					/*
+					 * Calculate if each pixel is in the foreground/background for each glyph.
+					 */
 					block[GLYPH_BLOCK].fg_red += red;
 					block[GLYPH_BLOCK].fg_green += green;
 					block[GLYPH_BLOCK].fg_blue += blue;
@@ -505,6 +527,9 @@ int main(/*int argc, char **argv*/) {
 
 			iter = DestroyPixelIterator(iter);
 
+			/*
+			 * Calculate average for foreground/background colours for each glyph.
+			 */
 			block[GLYPH_BLOCK].fg_red /= 32;
 			block[GLYPH_BLOCK].fg_green /= 32;
 			block[GLYPH_BLOCK].fg_blue /= 32;
@@ -617,9 +642,11 @@ int main(/*int argc, char **argv*/) {
 			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_green /= 16;
 			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_blue /= 16;
 
+			// Find the best glyph which represents this block of pixels.
 			GlyphIndex index = 0;
-			const char *glyph = getBestGlyph(&block, &index);
+			const char *glyph = get_best_glyph(&block, &index);
 
+			// Print the glyph with the appropriate foreground/background colour.
 			printf("\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm%s\x1b[0m",
 			       block[index].fg_red,
 			       block[index].fg_green,
