@@ -65,10 +65,26 @@ typedef struct {
 } Glyph;
 
 /*
+ * Log a fatal ImageMagick error and exit.
+ */
+void log_error_exit(const MagickWand *wand) {
+	ExceptionType severity;
+	char *description = MagickGetException(wand, &severity);
+
+	fprintf(stderr, "Error: %s:%s:%lu - %s\n", GetMagickModule(), description);
+
+	description = MagickRelinquishMemory(description);
+
+	MagickCoreTerminus();
+
+	exit(EXIT_FAILURE);
+}
+
+/*
  * Return the glyph that best represents the block of pixels.
  * Also updates the best_glyph pointer with the best glyph's index.
  */
-const char *get_best_glyph(Glyph (*block)[], GlyphIndex *best_glyph) {
+const char *get_best_glyph(const Glyph (*const block)[], GlyphIndex *best_glyph) {
 	unsigned int largest_contrast = 0;
 
 	for (size_t index = 0; index < NUM_DIFFERENT_GLYPHS; index++) {
@@ -127,7 +143,7 @@ int main(/*int argc, char **argv*/) {
 	MagickBooleanType status = MagickReadImage(wand, "/Users/simon/wd.jpg");
 
 	if (status == MagickFalse) {
-		// ThrowException(wand);
+		log_error_exit(wand);
 	}
 
 	size_t width = MagickGetImageWidth(wand);
