@@ -1,5 +1,8 @@
 #include <MagickWand/MagickWand.h>
+#include <getopt.h>
 #include <stdio.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 /*
  * Glyph IDs/indexes (for arrays).
@@ -53,6 +56,33 @@
 #define diff(a, b) a >= b ? a - b : b - a
 
 /*
+ * Convenient for adding to the foreground colour channels of a block.
+ */
+#define add_colour_to_fg(x) \
+	x.fg_red += red;        \
+	x.fg_green += green;    \
+	x.fg_blue += blue;
+
+/*
+ * Convenient for adding to the background colour channels of a block.
+ */
+#define add_colour_to_bg(x) \
+	x.bg_red += red;        \
+	x.bg_green += green;    \
+	x.bg_blue += blue;
+
+/*
+ * Convenient for averaging foreground/background colour channels.
+ */
+#define divide_fg_bg_colour(x, y, z) \
+	x.fg_red /= y;                   \
+	x.fg_green /= y;                 \
+	x.fg_blue /= y;                  \
+	x.bg_red /= z;                   \
+	x.bg_green /= z;                 \
+	x.bg_blue /= z;
+
+/*
  * Represents a glyph, with foreground and background colours.
  */
 typedef struct {
@@ -74,7 +104,6 @@ void log_error_exit(const MagickWand *wand) {
 	fprintf(stderr, "Error: %s:%s:%lu - %s\n", GetMagickModule(), description);
 
 	description = MagickRelinquishMemory(description);
-
 	MagickCoreTerminus();
 
 	exit(EXIT_FAILURE);
@@ -136,11 +165,37 @@ const char *get_best_glyph(const Glyph (*const block)[], GlyphIndex *best_glyph)
 	return GLYPH_BLOCK_STR;
 }
 
-int main(/*int argc, char **argv*/) {
+void usage(char *prog) {
+	printf("Usage: %s FILE...\n"
+	       "View image FILE in a terminal/console.\n"
+	       "Example: %s dog.jpg house.png\n",
+	       prog,
+	       prog);
+}
+
+int main(int argc, char *argv[]) {
+	static struct option long_opts[] = {{"help", no_argument, NULL, 'h'}, {NULL, 0, NULL, 0}};
+	int ch = 0;
+
+	while ((ch = getopt_long(argc, argv, ":h", long_opts, NULL)) != -1) {
+		switch (ch) {
+			case 'h':
+				usage(argv[0]);
+
+				return EXIT_SUCCESS;
+		}
+	}
+
+	if (argc <= 1) {
+		fprintf(stderr, "No input file specified.\n");
+
+		return EXIT_FAILURE;
+	}
+
 	MagickWandGenesis();
 
 	MagickWand *wand = NewMagickWand();
-	MagickBooleanType status = MagickReadImage(wand, "/Users/simon/wd.jpg");
+	MagickBooleanType status = MagickReadImage(wand, argv[1]);
 
 	if (status == MagickFalse) {
 		log_error_exit(wand);
@@ -148,6 +203,22 @@ int main(/*int argc, char **argv*/) {
 
 	size_t width = MagickGetImageWidth(wand);
 	size_t height = MagickGetImageHeight(wand);
+	struct winsize window = {0};
+	ioctl(STDOUT_FILENO, TIOCGWINSZ, &window);
+	size_t max_width = window.ws_col * 4;
+	size_t max_height = window.ws_row * 8;
+
+	if (width > max_width || height > max_height) {
+		float ratio = (float)height / width;
+		width = max_width;
+		height = width * ratio;
+		status = MagickResizeImage(wand, width, height, CubicFilter);
+
+		if (status == MagickFalse) {
+			log_error_exit(wand);
+		}
+	}
+
 	size_t num_cols = width / 4;
 	size_t num_rows = height / 8;
 
@@ -172,369 +243,117 @@ int main(/*int argc, char **argv*/) {
 					/*
 					 * Calculate if each pixel is in the foreground/background for each glyph.
 					 */
-					block[GLYPH_BLOCK].fg_red += red;
-					block[GLYPH_BLOCK].fg_green += green;
-					block[GLYPH_BLOCK].fg_blue += blue;
-					block[GLYPH_BLOCK].bg_red += red;
-					block[GLYPH_BLOCK].bg_green += green;
-					block[GLYPH_BLOCK].bg_blue += blue;
+					add_colour_to_fg(block[GLYPH_BLOCK]);
+					add_colour_to_bg(block[GLYPH_BLOCK]);
 
 					if (block_x == 0) {
-						block[GLYPH_LEFT_1_4].fg_red += red;
-						block[GLYPH_LEFT_1_4].fg_green += green;
-						block[GLYPH_LEFT_1_4].fg_blue += blue;
-
-						block[GLYPH_LEFT_2_4].fg_red += red;
-						block[GLYPH_LEFT_2_4].fg_green += green;
-						block[GLYPH_LEFT_2_4].fg_blue += blue;
-
-						block[GLYPH_LEFT_3_4].fg_red += red;
-						block[GLYPH_LEFT_3_4].fg_green += green;
-						block[GLYPH_LEFT_3_4].fg_blue += blue;
+						add_colour_to_fg(block[GLYPH_LEFT_1_4]);
+						add_colour_to_fg(block[GLYPH_LEFT_2_4]);
+						add_colour_to_fg(block[GLYPH_LEFT_3_4]);
 					} else if (block_x == 1) {
-						block[GLYPH_LEFT_1_4].bg_red += red;
-						block[GLYPH_LEFT_1_4].bg_green += green;
-						block[GLYPH_LEFT_1_4].bg_blue += blue;
-
-						block[GLYPH_LEFT_2_4].fg_red += red;
-						block[GLYPH_LEFT_2_4].fg_green += green;
-						block[GLYPH_LEFT_2_4].fg_blue += blue;
-
-						block[GLYPH_LEFT_3_4].fg_red += red;
-						block[GLYPH_LEFT_3_4].fg_green += green;
-						block[GLYPH_LEFT_3_4].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_LEFT_1_4]);
+						add_colour_to_fg(block[GLYPH_LEFT_2_4]);
+						add_colour_to_fg(block[GLYPH_LEFT_3_4]);
 					} else if (block_x == 2) {
-						block[GLYPH_LEFT_1_4].bg_red += red;
-						block[GLYPH_LEFT_1_4].bg_green += green;
-						block[GLYPH_LEFT_1_4].bg_blue += blue;
-
-						block[GLYPH_LEFT_2_4].bg_red += red;
-						block[GLYPH_LEFT_2_4].bg_green += green;
-						block[GLYPH_LEFT_2_4].bg_blue += blue;
-
-						block[GLYPH_LEFT_3_4].fg_red += red;
-						block[GLYPH_LEFT_3_4].fg_green += green;
-						block[GLYPH_LEFT_3_4].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_LEFT_1_4]);
+						add_colour_to_bg(block[GLYPH_LEFT_2_4]);
+						add_colour_to_fg(block[GLYPH_LEFT_3_4]);
 					} else if (block_x == 3) {
-						block[GLYPH_LEFT_1_4].bg_red += red;
-						block[GLYPH_LEFT_1_4].bg_green += green;
-						block[GLYPH_LEFT_1_4].bg_blue += blue;
-
-						block[GLYPH_LEFT_2_4].bg_red += red;
-						block[GLYPH_LEFT_2_4].bg_green += green;
-						block[GLYPH_LEFT_2_4].bg_blue += blue;
-
-						block[GLYPH_LEFT_3_4].bg_red += red;
-						block[GLYPH_LEFT_3_4].bg_green += green;
-						block[GLYPH_LEFT_3_4].bg_blue += blue;
+						add_colour_to_bg(block[GLYPH_LEFT_1_4]);
+						add_colour_to_bg(block[GLYPH_LEFT_2_4]);
+						add_colour_to_bg(block[GLYPH_LEFT_3_4]);
 					}
 
 					if (block_y == 0) {
-						block[GLYPH_BOTTOM_1_8].bg_red += red;
-						block[GLYPH_BOTTOM_1_8].bg_green += green;
-						block[GLYPH_BOTTOM_1_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].bg_red += red;
-						block[GLYPH_BOTTOM_2_8].bg_green += green;
-						block[GLYPH_BOTTOM_2_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].bg_red += red;
-						block[GLYPH_BOTTOM_3_8].bg_green += green;
-						block[GLYPH_BOTTOM_3_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].bg_red += red;
-						block[GLYPH_BOTTOM_4_8].bg_green += green;
-						block[GLYPH_BOTTOM_4_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].bg_red += red;
-						block[GLYPH_BOTTOM_5_8].bg_green += green;
-						block[GLYPH_BOTTOM_5_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].bg_red += red;
-						block[GLYPH_BOTTOM_6_8].bg_green += green;
-						block[GLYPH_BOTTOM_6_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].bg_red += red;
-						block[GLYPH_BOTTOM_7_8].bg_green += green;
-						block[GLYPH_BOTTOM_7_8].bg_blue += blue;
+						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_7_8]);
 					} else if (block_y == 1) {
-						block[GLYPH_BOTTOM_1_8].bg_red += red;
-						block[GLYPH_BOTTOM_1_8].bg_green += green;
-						block[GLYPH_BOTTOM_1_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].bg_red += red;
-						block[GLYPH_BOTTOM_2_8].bg_green += green;
-						block[GLYPH_BOTTOM_2_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].bg_red += red;
-						block[GLYPH_BOTTOM_3_8].bg_green += green;
-						block[GLYPH_BOTTOM_3_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].bg_red += red;
-						block[GLYPH_BOTTOM_4_8].bg_green += green;
-						block[GLYPH_BOTTOM_4_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].bg_red += red;
-						block[GLYPH_BOTTOM_5_8].bg_green += green;
-						block[GLYPH_BOTTOM_5_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].bg_red += red;
-						block[GLYPH_BOTTOM_6_8].bg_green += green;
-						block[GLYPH_BOTTOM_6_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].fg_red += red;
-						block[GLYPH_BOTTOM_7_8].fg_green += green;
-						block[GLYPH_BOTTOM_7_8].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
 					} else if (block_y == 2) {
-						block[GLYPH_BOTTOM_1_8].bg_red += red;
-						block[GLYPH_BOTTOM_1_8].bg_green += green;
-						block[GLYPH_BOTTOM_1_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].bg_red += red;
-						block[GLYPH_BOTTOM_2_8].bg_green += green;
-						block[GLYPH_BOTTOM_2_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].bg_red += red;
-						block[GLYPH_BOTTOM_3_8].bg_green += green;
-						block[GLYPH_BOTTOM_3_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].bg_red += red;
-						block[GLYPH_BOTTOM_4_8].bg_green += green;
-						block[GLYPH_BOTTOM_4_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].bg_red += red;
-						block[GLYPH_BOTTOM_5_8].bg_green += green;
-						block[GLYPH_BOTTOM_5_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].fg_red += red;
-						block[GLYPH_BOTTOM_6_8].fg_green += green;
-						block[GLYPH_BOTTOM_6_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].fg_red += red;
-						block[GLYPH_BOTTOM_7_8].fg_green += green;
-						block[GLYPH_BOTTOM_7_8].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
 					} else if (block_y == 3) {
-						block[GLYPH_BOTTOM_1_8].bg_red += red;
-						block[GLYPH_BOTTOM_1_8].bg_green += green;
-						block[GLYPH_BOTTOM_1_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].bg_red += red;
-						block[GLYPH_BOTTOM_2_8].bg_green += green;
-						block[GLYPH_BOTTOM_2_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].bg_red += red;
-						block[GLYPH_BOTTOM_3_8].bg_green += green;
-						block[GLYPH_BOTTOM_3_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].bg_red += red;
-						block[GLYPH_BOTTOM_4_8].bg_green += green;
-						block[GLYPH_BOTTOM_4_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].fg_red += red;
-						block[GLYPH_BOTTOM_5_8].fg_green += green;
-						block[GLYPH_BOTTOM_5_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].fg_red += red;
-						block[GLYPH_BOTTOM_6_8].fg_green += green;
-						block[GLYPH_BOTTOM_6_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].fg_red += red;
-						block[GLYPH_BOTTOM_7_8].fg_green += green;
-						block[GLYPH_BOTTOM_7_8].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
 					} else if (block_y == 4) {
-						block[GLYPH_BOTTOM_1_8].bg_red += red;
-						block[GLYPH_BOTTOM_1_8].bg_green += green;
-						block[GLYPH_BOTTOM_1_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].bg_red += red;
-						block[GLYPH_BOTTOM_2_8].bg_green += green;
-						block[GLYPH_BOTTOM_2_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].bg_red += red;
-						block[GLYPH_BOTTOM_3_8].bg_green += green;
-						block[GLYPH_BOTTOM_3_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].fg_red += red;
-						block[GLYPH_BOTTOM_4_8].fg_green += green;
-						block[GLYPH_BOTTOM_4_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].fg_red += red;
-						block[GLYPH_BOTTOM_5_8].fg_green += green;
-						block[GLYPH_BOTTOM_5_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].fg_red += red;
-						block[GLYPH_BOTTOM_6_8].fg_green += green;
-						block[GLYPH_BOTTOM_6_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].fg_red += red;
-						block[GLYPH_BOTTOM_7_8].fg_green += green;
-						block[GLYPH_BOTTOM_7_8].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
 					} else if (block_y == 5) {
-						block[GLYPH_BOTTOM_1_8].bg_red += red;
-						block[GLYPH_BOTTOM_1_8].bg_green += green;
-						block[GLYPH_BOTTOM_1_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].bg_red += red;
-						block[GLYPH_BOTTOM_2_8].bg_green += green;
-						block[GLYPH_BOTTOM_2_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].fg_red += red;
-						block[GLYPH_BOTTOM_3_8].fg_green += green;
-						block[GLYPH_BOTTOM_3_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].fg_red += red;
-						block[GLYPH_BOTTOM_4_8].fg_green += green;
-						block[GLYPH_BOTTOM_4_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].fg_red += red;
-						block[GLYPH_BOTTOM_5_8].fg_green += green;
-						block[GLYPH_BOTTOM_5_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].fg_red += red;
-						block[GLYPH_BOTTOM_6_8].fg_green += green;
-						block[GLYPH_BOTTOM_6_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].fg_red += red;
-						block[GLYPH_BOTTOM_7_8].fg_green += green;
-						block[GLYPH_BOTTOM_7_8].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
 					} else if (block_y == 6) {
-						block[GLYPH_BOTTOM_1_8].bg_red += red;
-						block[GLYPH_BOTTOM_1_8].bg_green += green;
-						block[GLYPH_BOTTOM_1_8].bg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].fg_red += red;
-						block[GLYPH_BOTTOM_2_8].fg_green += green;
-						block[GLYPH_BOTTOM_2_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].fg_red += red;
-						block[GLYPH_BOTTOM_3_8].fg_green += green;
-						block[GLYPH_BOTTOM_3_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].fg_red += red;
-						block[GLYPH_BOTTOM_4_8].fg_green += green;
-						block[GLYPH_BOTTOM_4_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].fg_red += red;
-						block[GLYPH_BOTTOM_5_8].fg_green += green;
-						block[GLYPH_BOTTOM_5_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].fg_red += red;
-						block[GLYPH_BOTTOM_6_8].fg_green += green;
-						block[GLYPH_BOTTOM_6_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].fg_red += red;
-						block[GLYPH_BOTTOM_7_8].fg_green += green;
-						block[GLYPH_BOTTOM_7_8].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
 					} else if (block_y == 7) {
-						block[GLYPH_BOTTOM_1_8].fg_red += red;
-						block[GLYPH_BOTTOM_1_8].fg_green += green;
-						block[GLYPH_BOTTOM_1_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_2_8].fg_red += red;
-						block[GLYPH_BOTTOM_2_8].fg_green += green;
-						block[GLYPH_BOTTOM_2_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_3_8].fg_red += red;
-						block[GLYPH_BOTTOM_3_8].fg_green += green;
-						block[GLYPH_BOTTOM_3_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_4_8].fg_red += red;
-						block[GLYPH_BOTTOM_4_8].fg_green += green;
-						block[GLYPH_BOTTOM_4_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_5_8].fg_red += red;
-						block[GLYPH_BOTTOM_5_8].fg_green += green;
-						block[GLYPH_BOTTOM_5_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_6_8].fg_red += red;
-						block[GLYPH_BOTTOM_6_8].fg_green += green;
-						block[GLYPH_BOTTOM_6_8].fg_blue += blue;
-
-						block[GLYPH_BOTTOM_7_8].fg_red += red;
-						block[GLYPH_BOTTOM_7_8].fg_green += green;
-						block[GLYPH_BOTTOM_7_8].fg_blue += blue;
+						add_colour_to_fg(block[GLYPH_BOTTOM_1_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_2_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
 					}
 
 					if (block_x < 2 && block_y < 4) {
-						block[GLYPH_QUAD_TOP_LEFT].fg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT].fg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT].fg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_TOP_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_TOP_RIGHT].bg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_red += red;
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_green += green;
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_blue += blue;
+						add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT]);
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
+						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+						add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
 					} else if (block_x >= 2 && block_y < 4) {
-						block[GLYPH_QUAD_TOP_LEFT].bg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT].bg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT].bg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_RIGHT].fg_red += red;
-						block[GLYPH_QUAD_TOP_RIGHT].fg_green += green;
-						block[GLYPH_QUAD_TOP_RIGHT].fg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_red += red;
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_green += green;
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_blue += blue;
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
+						add_colour_to_fg(block[GLYPH_QUAD_TOP_RIGHT]);
+						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
 					} else if (block_x < 2 && block_y >= 4) {
-						block[GLYPH_QUAD_TOP_LEFT].bg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT].bg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT].bg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_TOP_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_TOP_RIGHT].bg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_LEFT].fg_red += red;
-						block[GLYPH_QUAD_BOTTOM_LEFT].fg_green += green;
-						block[GLYPH_QUAD_BOTTOM_LEFT].fg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].bg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_blue += blue;
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
+						add_colour_to_fg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
 					} else if (block_x >= 2 && block_y >= 4) {
-						block[GLYPH_QUAD_TOP_LEFT].bg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT].bg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT].bg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_RIGHT].bg_red += red;
-						block[GLYPH_QUAD_TOP_RIGHT].bg_green += green;
-						block[GLYPH_QUAD_TOP_RIGHT].bg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_red += red;
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_green += green;
-						block[GLYPH_QUAD_BOTTOM_LEFT].bg_blue += blue;
-
-						block[GLYPH_QUAD_BOTTOM_RIGHT].fg_red += red;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].fg_green += green;
-						block[GLYPH_QUAD_BOTTOM_RIGHT].fg_blue += blue;
-
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_red += red;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_green += green;
-						block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_blue += blue;
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
+						add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
+						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+						add_colour_to_fg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+						add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
 					}
 				}
 
@@ -546,117 +365,22 @@ int main(/*int argc, char **argv*/) {
 			/*
 			 * Calculate average for foreground/background colours for each glyph.
 			 */
-			block[GLYPH_BLOCK].fg_red /= 32;
-			block[GLYPH_BLOCK].fg_green /= 32;
-			block[GLYPH_BLOCK].fg_blue /= 32;
-			block[GLYPH_BLOCK].bg_red /= 32;
-			block[GLYPH_BLOCK].bg_green /= 32;
-			block[GLYPH_BLOCK].bg_blue /= 32;
-
-			block[GLYPH_LEFT_1_4].fg_red /= 8;
-			block[GLYPH_LEFT_1_4].fg_green /= 8;
-			block[GLYPH_LEFT_1_4].fg_blue /= 8;
-			block[GLYPH_LEFT_1_4].bg_red /= 24;
-			block[GLYPH_LEFT_1_4].bg_green /= 24;
-			block[GLYPH_LEFT_1_4].bg_blue /= 24;
-
-			block[GLYPH_LEFT_2_4].fg_red /= 16;
-			block[GLYPH_LEFT_2_4].fg_green /= 16;
-			block[GLYPH_LEFT_2_4].fg_blue /= 16;
-			block[GLYPH_LEFT_2_4].bg_red /= 16;
-			block[GLYPH_LEFT_2_4].bg_green /= 16;
-			block[GLYPH_LEFT_2_4].bg_blue /= 16;
-
-			block[GLYPH_LEFT_3_4].fg_red /= 24;
-			block[GLYPH_LEFT_3_4].fg_green /= 24;
-			block[GLYPH_LEFT_3_4].fg_blue /= 24;
-			block[GLYPH_LEFT_3_4].bg_red /= 8;
-			block[GLYPH_LEFT_3_4].bg_green /= 8;
-			block[GLYPH_LEFT_3_4].bg_blue /= 8;
-
-			block[GLYPH_BOTTOM_1_8].fg_red /= 4;
-			block[GLYPH_BOTTOM_1_8].fg_green /= 4;
-			block[GLYPH_BOTTOM_1_8].fg_blue /= 4;
-			block[GLYPH_BOTTOM_1_8].bg_red /= 28;
-			block[GLYPH_BOTTOM_1_8].bg_green /= 28;
-			block[GLYPH_BOTTOM_1_8].bg_blue /= 28;
-
-			block[GLYPH_BOTTOM_2_8].fg_red /= 8;
-			block[GLYPH_BOTTOM_2_8].fg_green /= 8;
-			block[GLYPH_BOTTOM_2_8].fg_blue /= 8;
-			block[GLYPH_BOTTOM_2_8].bg_red /= 24;
-			block[GLYPH_BOTTOM_2_8].bg_green /= 24;
-			block[GLYPH_BOTTOM_2_8].bg_blue /= 24;
-
-			block[GLYPH_BOTTOM_3_8].fg_red /= 12;
-			block[GLYPH_BOTTOM_3_8].fg_green /= 12;
-			block[GLYPH_BOTTOM_3_8].fg_blue /= 12;
-			block[GLYPH_BOTTOM_3_8].bg_red /= 20;
-			block[GLYPH_BOTTOM_3_8].bg_green /= 20;
-			block[GLYPH_BOTTOM_3_8].bg_blue /= 20;
-
-			block[GLYPH_BOTTOM_4_8].fg_red /= 16;
-			block[GLYPH_BOTTOM_4_8].fg_green /= 16;
-			block[GLYPH_BOTTOM_4_8].fg_blue /= 16;
-			block[GLYPH_BOTTOM_4_8].bg_red /= 16;
-			block[GLYPH_BOTTOM_4_8].bg_green /= 16;
-			block[GLYPH_BOTTOM_4_8].bg_blue /= 16;
-
-			block[GLYPH_BOTTOM_5_8].fg_red /= 20;
-			block[GLYPH_BOTTOM_5_8].fg_green /= 20;
-			block[GLYPH_BOTTOM_5_8].fg_blue /= 20;
-			block[GLYPH_BOTTOM_5_8].bg_red /= 12;
-			block[GLYPH_BOTTOM_5_8].bg_green /= 12;
-			block[GLYPH_BOTTOM_5_8].bg_blue /= 12;
-
-			block[GLYPH_BOTTOM_6_8].fg_red /= 24;
-			block[GLYPH_BOTTOM_6_8].fg_green /= 24;
-			block[GLYPH_BOTTOM_6_8].fg_blue /= 24;
-			block[GLYPH_BOTTOM_6_8].bg_red /= 8;
-			block[GLYPH_BOTTOM_6_8].bg_green /= 8;
-			block[GLYPH_BOTTOM_6_8].bg_blue /= 8;
-
-			block[GLYPH_BOTTOM_7_8].fg_red /= 28;
-			block[GLYPH_BOTTOM_7_8].fg_green /= 28;
-			block[GLYPH_BOTTOM_7_8].fg_blue /= 28;
-			block[GLYPH_BOTTOM_7_8].bg_red /= 4;
-			block[GLYPH_BOTTOM_7_8].bg_green /= 4;
-			block[GLYPH_BOTTOM_7_8].bg_blue /= 4;
-
-			block[GLYPH_QUAD_TOP_LEFT].fg_red /= 8;
-			block[GLYPH_QUAD_TOP_LEFT].fg_green /= 8;
-			block[GLYPH_QUAD_TOP_LEFT].fg_blue /= 8;
-			block[GLYPH_QUAD_TOP_LEFT].bg_red /= 24;
-			block[GLYPH_QUAD_TOP_LEFT].bg_green /= 24;
-			block[GLYPH_QUAD_TOP_LEFT].bg_blue /= 24;
-
-			block[GLYPH_QUAD_TOP_RIGHT].fg_red /= 8;
-			block[GLYPH_QUAD_TOP_RIGHT].fg_green /= 8;
-			block[GLYPH_QUAD_TOP_RIGHT].fg_blue /= 8;
-			block[GLYPH_QUAD_TOP_RIGHT].bg_red /= 24;
-			block[GLYPH_QUAD_TOP_RIGHT].bg_green /= 24;
-			block[GLYPH_QUAD_TOP_RIGHT].bg_blue /= 24;
-
-			block[GLYPH_QUAD_BOTTOM_LEFT].fg_red /= 8;
-			block[GLYPH_QUAD_BOTTOM_LEFT].fg_green /= 8;
-			block[GLYPH_QUAD_BOTTOM_LEFT].fg_blue /= 8;
-			block[GLYPH_QUAD_BOTTOM_LEFT].bg_red /= 24;
-			block[GLYPH_QUAD_BOTTOM_LEFT].bg_green /= 24;
-			block[GLYPH_QUAD_BOTTOM_LEFT].bg_blue /= 24;
-
-			block[GLYPH_QUAD_BOTTOM_RIGHT].fg_red /= 8;
-			block[GLYPH_QUAD_BOTTOM_RIGHT].fg_green /= 8;
-			block[GLYPH_QUAD_BOTTOM_RIGHT].fg_blue /= 8;
-			block[GLYPH_QUAD_BOTTOM_RIGHT].bg_red /= 24;
-			block[GLYPH_QUAD_BOTTOM_RIGHT].bg_green /= 24;
-			block[GLYPH_QUAD_BOTTOM_RIGHT].bg_blue /= 24;
-
-			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_red /= 16;
-			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_green /= 16;
-			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].fg_blue /= 16;
-			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_red /= 16;
-			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_green /= 16;
-			block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT].bg_blue /= 16;
+			divide_fg_bg_colour(block[GLYPH_BLOCK], 32, 32);
+			divide_fg_bg_colour(block[GLYPH_LEFT_1_4], 8, 24);
+			divide_fg_bg_colour(block[GLYPH_LEFT_2_4], 16, 16);
+			divide_fg_bg_colour(block[GLYPH_LEFT_3_4], 24, 8);
+			divide_fg_bg_colour(block[GLYPH_BOTTOM_1_8], 4, 28);
+			divide_fg_bg_colour(block[GLYPH_BOTTOM_2_8], 8, 24);
+			divide_fg_bg_colour(block[GLYPH_BOTTOM_3_8], 12, 20);
+			divide_fg_bg_colour(block[GLYPH_BOTTOM_4_8], 16, 16);
+			divide_fg_bg_colour(block[GLYPH_BOTTOM_5_8], 20, 12);
+			divide_fg_bg_colour(block[GLYPH_BOTTOM_6_8], 24, 8);
+			divide_fg_bg_colour(block[GLYPH_BOTTOM_7_8], 28, 4);
+			divide_fg_bg_colour(block[GLYPH_QUAD_TOP_LEFT], 8, 24);
+			divide_fg_bg_colour(block[GLYPH_QUAD_TOP_RIGHT], 8, 24);
+			divide_fg_bg_colour(block[GLYPH_QUAD_BOTTOM_LEFT], 8, 24);
+			divide_fg_bg_colour(block[GLYPH_QUAD_BOTTOM_RIGHT], 8, 24);
+			divide_fg_bg_colour(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT], 16, 16);
 
 			// Find the best glyph which represents this block of pixels.
 			GlyphIndex index = 0;
