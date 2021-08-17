@@ -169,7 +169,7 @@ const char *get_best_glyph(const Glyph (*const block)[], GlyphIndex *best_glyph)
 	return GLYPH_BLOCK_STR;
 }
 
-void usage(char *prog) {
+void usage(const char *prog) {
 	printf("Usage: %s FILE...\n"
 	       "View image FILE in a terminal/console.\n"
 	       "Example: %s dog.jpg house.png\n",
