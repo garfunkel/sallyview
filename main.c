@@ -1,4 +1,8 @@
-#include <MagickWand/MagickWand.h>
+#if __has_include(<MagickWand/MagickWand.h>)
+	#include <MagickWand/MagickWand.h>
+#else
+	#include <wand/MagickWand.h>
+#endif
 #include <getopt.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
