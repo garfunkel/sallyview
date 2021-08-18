@@ -49,10 +49,47 @@
 #define GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT_STR "\u259A"
 
 /*
+ * String values for various DACs.
+ */
+#define DAC_VGA "vga"
+#define DAC_WIN_XP "win-xp"
+#define DAC_POWERSHELL "powershell"
+#define DAC_VS_CODE "vs-code"
+#define DAC_WIN_10 "win-10"
+#define DAC_TERMINAL_APP "terminal.app"
+#define DAC_PUTTY "putty"
+#define DAC_MIRC "mirc"
+#define DAC_XTERM "xterm"
+#define DAC_LINUX "linux"
+#define DAC_ECLIPSE "eclipse"
+
+/*
+ * String values for various colour depths.
+ */
+#define COLOUR_DEPTH_3 "3"
+#define COLOUR_DEPTH_4 "4"
+#define COLOUR_DEPTH_8 "8"
+#define COLOUR_DEPTH_24 "24"
+#define DEFAULT_COLOUR_DEPTH COLOUR_DEPTH_24
+
+/*
  * Global definitions.
  */
 #define NUM_DIFFERENT_GLYPHS 16
 #define GlyphIndex int
+
+/*
+ * 24-bit colour mappings for 3-4 bit ANSI.
+ */
+#ifdef __linux__
+	#define DEFAULT_DAC DAC_LINUX
+#elif __APPLE__
+	#define DEFAULT_DAC DAC_TERMINAL_APP
+#elif _WIN32
+	#define DEFAULT_DAC DAC_WIN_10
+#else
+	#define DEFAULT_DAC DAC_VGA
+#endif
 
 /*
  * Return the difference between two numbers.
@@ -86,6 +123,16 @@
 	x.bg_green /= z;                 \
 	x.bg_blue /= z;
 
+#define convert_to_greyscale(x)                    \
+	int total = x.fg_red + x.fg_green + x.fg_blue; \
+	x.fg_red = total / 3;                          \
+	x.fg_green = total / 3;                        \
+	x.fg_blue = total / 3;                         \
+	total = x.bg_red + x.bg_green + x.bg_blue;     \
+	x.bg_red = total / 3;                          \
+	x.bg_green = total / 3;                        \
+	x.bg_blue = total / 3;
+
 /*
  * Represents a glyph, with foreground and background colours.
  */
@@ -97,6 +144,12 @@ typedef struct {
 	unsigned int bg_green;
 	unsigned int bg_blue;
 } Glyph;
+
+typedef struct {
+	unsigned int red;
+	unsigned int green;
+	unsigned int blue;
+} Colour;
 
 /*
  * Log a fatal ImageMagick error and exit.
@@ -172,17 +225,54 @@ const char *get_best_glyph(const Glyph (*const block)[], GlyphIndex *best_glyph)
 void usage(const char *prog) {
 	printf("Usage: %s FILE...\n"
 	       "View image FILE in a terminal/console.\n"
-	       "Example: %s dog.jpg house.png\n",
+	       "Example: %s dog.jpg house.png\n\n"
+	       "Options:\n"
+	       "  -c, --colour-depth  output colour depth (" COLOUR_DEPTH_3 ", " COLOUR_DEPTH_4 ", " COLOUR_DEPTH_8
+	       ", " COLOUR_DEPTH_24 ") (default: " DEFAULT_COLOUR_DEPTH ")\n"
+	       "  -d, --dac           DAC used for 3-bit or 4-bit colour depth\n"
+	       "                      (" DAC_VGA ", " DAC_WIN_XP ", " DAC_POWERSHELL ", " DAC_VS_CODE ", " DAC_WIN_10
+	       ", " DAC_TERMINAL_APP ",\n"
+	       "                      " DAC_PUTTY ", " DAC_MIRC ", " DAC_XTERM ", " DAC_LINUX ", " DAC_ECLIPSE
+	       ") (default: " DEFAULT_DAC ")\n"
+	       "  -g, --greyscale     output in greyscale\n",
 	       prog,
 	       prog);
 }
 
 int main(int argc, char *argv[]) {
-	static struct option long_opts[] = {{"help", no_argument, NULL, 'h'}, {NULL, 0, NULL, 0}};
+	static char opt_greyscale = 0;
+	static struct option long_opts[] = {{"help", no_argument, NULL, 'h'},
+	                                    {"colour-depth", required_argument, NULL, 'c'},
+	                                    {"dac", required_argument, NULL, 'd'},
+	                                    {"greyscale", no_argument, NULL, 'g'},
+	                                    {NULL, 0, NULL, 0}};
 	int ch = 0;
+	int images = 0;
+	char *colour_depth = DEFAULT_COLOUR_DEPTH;
+	char *dac = DEFAULT_DAC;
 
-	while ((ch = getopt_long(argc, argv, ":h", long_opts, NULL)) != -1) {
+	while ((ch = getopt_long(argc, argv, "c:d:gh", long_opts, NULL)) != -1) {
 		switch (ch) {
+			case 'c':
+				colour_depth = optarg;
+				argv[optind - 2] = NULL;
+				argv[optind - 1] = NULL;
+
+				break;
+
+			case 'd':
+				dac = optarg;
+				argv[optind - 2] = NULL;
+				argv[optind - 1] = NULL;
+
+				break;
+
+			case 'g':
+				opt_greyscale = 1;
+				argv[optind - 1] = NULL;
+
+				break;
+
 			case 'h':
 				usage(argv[0]);
 
@@ -198,213 +288,230 @@ int main(int argc, char *argv[]) {
 
 	MagickWandGenesis();
 
-	MagickWand *wand = NewMagickWand();
-	MagickBooleanType status = MagickReadImage(wand, argv[1]);
+	for (int i = 1; i < argc; i++) {
+		if (argv[i] == NULL) {
+			continue;
+		}
 
-	if (status == MagickFalse) {
-		log_error_exit(wand);
-	}
+		continue;
 
-	size_t width = MagickGetImageWidth(wand);
-	size_t height = MagickGetImageHeight(wand);
-	struct winsize window = {0};
-	ioctl(STDOUT_FILENO, TIOCGWINSZ, &window);
-	size_t max_width = window.ws_col * 4;
-	size_t max_height = window.ws_row * 8;
-
-	if (width > max_width || height > max_height) {
-		float ratio = (float)height / width;
-		width = max_width;
-		height = width * ratio;
-		status = MagickResizeImage(wand, width, height, CubicFilter);
+		MagickWand *wand = NewMagickWand();
+		MagickBooleanType status = MagickReadImage(wand, argv[i]);
 
 		if (status == MagickFalse) {
 			log_error_exit(wand);
 		}
-	}
 
-	size_t num_cols = width / 4;
-	size_t num_rows = height / 8;
+		size_t width = MagickGetImageWidth(wand);
+		size_t height = MagickGetImageHeight(wand);
+		struct winsize window = {0};
+		ioctl(STDOUT_FILENO, TIOCGWINSZ, &window);
+		size_t max_width = window.ws_col * 4;
+		size_t max_height = window.ws_row * 8;
 
-	for (size_t row_index = 0; row_index < num_rows; row_index++) {
-		size_t y = row_index * 8;
+		if (width > max_width || height > max_height) {
+			float ratio = (float)height / width;
+			width = max_width;
+			height = width * ratio;
+			status = MagickResizeImage(wand, width, height, CubicFilter);
 
-		for (size_t col_index = 0; col_index < num_cols; col_index++) {
-			size_t x = col_index * 4;
-			PixelIterator *iter = NewPixelRegionIterator(wand, x, y, 4, 8);
-			PixelWand **row = NULL;
-			size_t num_wands = 0;
-			size_t block_y = 0;
-			Glyph block[NUM_DIFFERENT_GLYPHS] = {0};
-
-			while ((row = PixelGetNextIteratorRow(iter, &num_wands)) != NULL) {
-				for (size_t block_x = 0; block_x < num_wands; block_x++) {
-					// Convert from ratio to decimal.
-					unsigned int red = 255 * PixelGetRed(row[block_x]);
-					unsigned int green = 255 * PixelGetGreen(row[block_x]);
-					unsigned int blue = 255 * PixelGetBlue(row[block_x]);
-
-					/*
-					 * Calculate if each pixel is in the foreground/background for each glyph.
-					 */
-					add_colour_to_fg(block[GLYPH_BLOCK]);
-					add_colour_to_bg(block[GLYPH_BLOCK]);
-
-					if (block_x == 0) {
-						add_colour_to_fg(block[GLYPH_LEFT_1_4]);
-						add_colour_to_fg(block[GLYPH_LEFT_2_4]);
-						add_colour_to_fg(block[GLYPH_LEFT_3_4]);
-					} else if (block_x == 1) {
-						add_colour_to_bg(block[GLYPH_LEFT_1_4]);
-						add_colour_to_fg(block[GLYPH_LEFT_2_4]);
-						add_colour_to_fg(block[GLYPH_LEFT_3_4]);
-					} else if (block_x == 2) {
-						add_colour_to_bg(block[GLYPH_LEFT_1_4]);
-						add_colour_to_bg(block[GLYPH_LEFT_2_4]);
-						add_colour_to_fg(block[GLYPH_LEFT_3_4]);
-					} else if (block_x == 3) {
-						add_colour_to_bg(block[GLYPH_LEFT_1_4]);
-						add_colour_to_bg(block[GLYPH_LEFT_2_4]);
-						add_colour_to_bg(block[GLYPH_LEFT_3_4]);
-					}
-
-					if (block_y == 0) {
-						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_7_8]);
-					} else if (block_y == 1) {
-						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
-					} else if (block_y == 2) {
-						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
-					} else if (block_y == 3) {
-						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
-					} else if (block_y == 4) {
-						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
-					} else if (block_y == 5) {
-						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
-					} else if (block_y == 6) {
-						add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
-					} else if (block_y == 7) {
-						add_colour_to_fg(block[GLYPH_BOTTOM_1_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_2_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
-						add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
-					}
-
-					if (block_x < 2 && block_y < 4) {
-						add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT]);
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
-						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
-						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
-						add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
-					} else if (block_x >= 2 && block_y < 4) {
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
-						add_colour_to_fg(block[GLYPH_QUAD_TOP_RIGHT]);
-						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
-						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
-					} else if (block_x < 2 && block_y >= 4) {
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
-						add_colour_to_fg(block[GLYPH_QUAD_BOTTOM_LEFT]);
-						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
-					} else if (block_x >= 2 && block_y >= 4) {
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
-						add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
-						add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
-						add_colour_to_fg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
-						add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
-					}
-				}
-
-				block_y++;
+			if (status == MagickFalse) {
+				log_error_exit(wand);
 			}
-
-			iter = DestroyPixelIterator(iter);
-
-			/*
-			 * Calculate average for foreground/background colours for each glyph.
-			 */
-			divide_fg_bg_colour(block[GLYPH_BLOCK], 32, 32);
-			divide_fg_bg_colour(block[GLYPH_LEFT_1_4], 8, 24);
-			divide_fg_bg_colour(block[GLYPH_LEFT_2_4], 16, 16);
-			divide_fg_bg_colour(block[GLYPH_LEFT_3_4], 24, 8);
-			divide_fg_bg_colour(block[GLYPH_BOTTOM_1_8], 4, 28);
-			divide_fg_bg_colour(block[GLYPH_BOTTOM_2_8], 8, 24);
-			divide_fg_bg_colour(block[GLYPH_BOTTOM_3_8], 12, 20);
-			divide_fg_bg_colour(block[GLYPH_BOTTOM_4_8], 16, 16);
-			divide_fg_bg_colour(block[GLYPH_BOTTOM_5_8], 20, 12);
-			divide_fg_bg_colour(block[GLYPH_BOTTOM_6_8], 24, 8);
-			divide_fg_bg_colour(block[GLYPH_BOTTOM_7_8], 28, 4);
-			divide_fg_bg_colour(block[GLYPH_QUAD_TOP_LEFT], 8, 24);
-			divide_fg_bg_colour(block[GLYPH_QUAD_TOP_RIGHT], 8, 24);
-			divide_fg_bg_colour(block[GLYPH_QUAD_BOTTOM_LEFT], 8, 24);
-			divide_fg_bg_colour(block[GLYPH_QUAD_BOTTOM_RIGHT], 8, 24);
-			divide_fg_bg_colour(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT], 16, 16);
-
-			// Find the best glyph which represents this block of pixels.
-			GlyphIndex index = 0;
-			const char *glyph = get_best_glyph(&block, &index);
-
-			// Print the glyph with the appropriate foreground/background colour.
-			printf("\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm%s\x1b[0m",
-			       block[index].fg_red,
-			       block[index].fg_green,
-			       block[index].fg_blue,
-			       block[index].bg_red,
-			       block[index].bg_green,
-			       block[index].bg_blue,
-			       glyph);
 		}
 
-		printf("\n");
+		if (images++ > 0) {
+			printf("\n");
+		}
+
+		size_t num_cols = width / 4;
+		size_t num_rows = height / 8;
+
+		for (size_t row_index = 0; row_index < num_rows; row_index++) {
+			size_t y = row_index * 8;
+
+			for (size_t col_index = 0; col_index < num_cols; col_index++) {
+				size_t x = col_index * 4;
+				PixelIterator *iter = NewPixelRegionIterator(wand, x, y, 4, 8);
+				PixelWand **row = NULL;
+				size_t num_wands = 0;
+				size_t block_y = 0;
+				Glyph block[NUM_DIFFERENT_GLYPHS] = {0};
+
+				while ((row = PixelGetNextIteratorRow(iter, &num_wands)) != NULL) {
+					for (size_t block_x = 0; block_x < num_wands; block_x++) {
+						// Convert from ratio to decimal.
+						unsigned int red = 255 * PixelGetRed(row[block_x]);
+						unsigned int green = 255 * PixelGetGreen(row[block_x]);
+						unsigned int blue = 255 * PixelGetBlue(row[block_x]);
+
+						/*
+						 * Calculate if each pixel is in the foreground/background for each glyph.
+						 */
+						add_colour_to_fg(block[GLYPH_BLOCK]);
+						add_colour_to_bg(block[GLYPH_BLOCK]);
+
+						if (block_x == 0) {
+							add_colour_to_fg(block[GLYPH_LEFT_1_4]);
+							add_colour_to_fg(block[GLYPH_LEFT_2_4]);
+							add_colour_to_fg(block[GLYPH_LEFT_3_4]);
+						} else if (block_x == 1) {
+							add_colour_to_bg(block[GLYPH_LEFT_1_4]);
+							add_colour_to_fg(block[GLYPH_LEFT_2_4]);
+							add_colour_to_fg(block[GLYPH_LEFT_3_4]);
+						} else if (block_x == 2) {
+							add_colour_to_bg(block[GLYPH_LEFT_1_4]);
+							add_colour_to_bg(block[GLYPH_LEFT_2_4]);
+							add_colour_to_fg(block[GLYPH_LEFT_3_4]);
+						} else if (block_x == 3) {
+							add_colour_to_bg(block[GLYPH_LEFT_1_4]);
+							add_colour_to_bg(block[GLYPH_LEFT_2_4]);
+							add_colour_to_bg(block[GLYPH_LEFT_3_4]);
+						}
+
+						if (block_y == 0) {
+							add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_7_8]);
+						} else if (block_y == 1) {
+							add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
+						} else if (block_y == 2) {
+							add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
+						} else if (block_y == 3) {
+							add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
+						} else if (block_y == 4) {
+							add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
+						} else if (block_y == 5) {
+							add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_bg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
+						} else if (block_y == 6) {
+							add_colour_to_bg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
+						} else if (block_y == 7) {
+							add_colour_to_fg(block[GLYPH_BOTTOM_1_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_2_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_3_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_4_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_5_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_6_8]);
+							add_colour_to_fg(block[GLYPH_BOTTOM_7_8]);
+						}
+
+						if (block_x < 2 && block_y < 4) {
+							add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT]);
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
+							add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+							add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+							add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
+						} else if (block_x >= 2 && block_y < 4) {
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
+							add_colour_to_fg(block[GLYPH_QUAD_TOP_RIGHT]);
+							add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+							add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
+						} else if (block_x < 2 && block_y >= 4) {
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
+							add_colour_to_fg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+							add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
+						} else if (block_x >= 2 && block_y >= 4) {
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_LEFT]);
+							add_colour_to_bg(block[GLYPH_QUAD_TOP_RIGHT]);
+							add_colour_to_bg(block[GLYPH_QUAD_BOTTOM_LEFT]);
+							add_colour_to_fg(block[GLYPH_QUAD_BOTTOM_RIGHT]);
+							add_colour_to_fg(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT]);
+						}
+					}
+
+					block_y++;
+				}
+
+				iter = DestroyPixelIterator(iter);
+
+				/*
+				 * Calculate average for foreground/background colours for each glyph.
+				 */
+				divide_fg_bg_colour(block[GLYPH_BLOCK], 32, 32);
+				divide_fg_bg_colour(block[GLYPH_LEFT_1_4], 8, 24);
+				divide_fg_bg_colour(block[GLYPH_LEFT_2_4], 16, 16);
+				divide_fg_bg_colour(block[GLYPH_LEFT_3_4], 24, 8);
+				divide_fg_bg_colour(block[GLYPH_BOTTOM_1_8], 4, 28);
+				divide_fg_bg_colour(block[GLYPH_BOTTOM_2_8], 8, 24);
+				divide_fg_bg_colour(block[GLYPH_BOTTOM_3_8], 12, 20);
+				divide_fg_bg_colour(block[GLYPH_BOTTOM_4_8], 16, 16);
+				divide_fg_bg_colour(block[GLYPH_BOTTOM_5_8], 20, 12);
+				divide_fg_bg_colour(block[GLYPH_BOTTOM_6_8], 24, 8);
+				divide_fg_bg_colour(block[GLYPH_BOTTOM_7_8], 28, 4);
+				divide_fg_bg_colour(block[GLYPH_QUAD_TOP_LEFT], 8, 24);
+				divide_fg_bg_colour(block[GLYPH_QUAD_TOP_RIGHT], 8, 24);
+				divide_fg_bg_colour(block[GLYPH_QUAD_BOTTOM_LEFT], 8, 24);
+				divide_fg_bg_colour(block[GLYPH_QUAD_BOTTOM_RIGHT], 8, 24);
+				divide_fg_bg_colour(block[GLYPH_QUAD_TOP_LEFT_BOTTOM_RIGHT], 16, 16);
+
+				// Find the best glyph which represents this block of pixels.
+				GlyphIndex index = 0;
+				const char *glyph = get_best_glyph(&block, &index);
+
+				if (opt_greyscale == 1) {
+					convert_to_greyscale(block[index]);
+				}
+
+				// Print the glyph with the appropriate foreground/background colour.
+				printf("\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm%s\x1b[0m",
+				       block[index].fg_red,
+				       block[index].fg_green,
+				       block[index].fg_blue,
+				       block[index].bg_red,
+				       block[index].bg_green,
+				       block[index].bg_blue,
+				       glyph);
+			}
+
+			printf("\n");
+		}
+
+		wand = DestroyMagickWand(wand);
 	}
 
-	wand = DestroyMagickWand(wand);
 	MagickWandTerminus();
 
 	return EXIT_SUCCESS;
