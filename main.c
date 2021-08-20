@@ -1605,6 +1605,7 @@ int main(int argc, char *argv[]) {
 					convert_to_greyscale(block[index]);
 				}
 
+				// Print the glyph with the appropriate foreground/background colour.
 				// Convert to lower colour depth using specified DAC, if required.
 				if (!strcmp(colour_depth, COLOUR_DEPTH_3)) {
 					DacColour colour = convert_3_4_bit_colour(NUM_DAC_3_BIT_COLOURS, block[index], dac);
@@ -1619,7 +1620,6 @@ int main(int argc, char *argv[]) {
 
 					printf("\x1b[38;5;%d;48;5;%dm%s\x1b[0m", colour.ansi_fg, colour.ansi_bg, glyph);
 				} else {
-					// Print the glyph with the appropriate foreground/background colour.
 					printf("\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm%s\x1b[0m",
 					       block[index].fg_red,
 					       block[index].fg_green,
