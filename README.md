@@ -11,8 +11,8 @@ Sallyview reads images as 4x8 pixel regions and displays the results using Unico
 	Options:
 	-c, --colour-depth  output colour depth (3, 4, 8, 24) (default: 24)
 	-d, --dac           DAC used for 3-bit or 4-bit colour depth
-						(vga, win-xp, powershell, vs-code, win-10, terminal.app,
-						putty, mirc, xterm, linux, eclipse) (default: terminal.app)
+	                    (vga, win-xp, powershell, vs-code, win-10, terminal.app,
+	                    putty, mirc, xterm, linux, eclipse) (default: terminal.app)
 	-g, --greyscale     output in greyscale
 
 ## Compatibility
